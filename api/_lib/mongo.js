@@ -29,4 +29,20 @@ function getArchiveCollection(client) {
   return client.db('nutiliti').collection('clickup_archived_tasks');
 }
 
-module.exports = { getMongoClient, getArchiveCollection };
+/**
+ * Upsert many archive docs in a single round-trip. Unordered so a single
+ * bad doc doesn't block the rest. `docs` must each have `clickupTaskId`.
+ */
+async function bulkUpsertArchiveDocs(collection, docs) {
+  if (!docs.length) return { upsertedCount: 0, modifiedCount: 0, matchedCount: 0 };
+  const ops = docs.map(doc => ({
+    updateOne: {
+      filter: { clickupTaskId: doc.clickupTaskId },
+      update: { $set: doc },
+      upsert: true
+    }
+  }));
+  return collection.bulkWrite(ops, { ordered: false });
+}
+
+module.exports = { getMongoClient, getArchiveCollection, bulkUpsertArchiveDocs };

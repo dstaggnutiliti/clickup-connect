@@ -1,5 +1,5 @@
 // api/_lib/clickup.js - Thin ClickUp API client built on native fetch
-const { fetchJson } = require('./http');
+const { fetchJson, fetchJsonFull } = require('./http');
 
 const BASE_URL = 'https://api.clickup.com/api/v2';
 
@@ -56,6 +56,37 @@ async function deleteTask(taskId, { timeout = 8000 } = {}) {
 }
 
 /**
+ * DELETE a task and also return the rate-limit state reported by ClickUp.
+ * Returns { data, rateLimit } where rateLimit = { limit, remaining, reset }
+ * or null if headers were absent.
+ */
+async function deleteTaskWithMeta(taskId, { timeout = 8000 } = {}) {
+  const { data, headers } = await fetchJsonFull(`${BASE_URL}/task/${taskId}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+    timeout
+  });
+  return { data, rateLimit: parseRateLimit(headers) };
+}
+
+/**
+ * Read ClickUp's rate-limit headers. `reset` is a Unix timestamp in seconds.
+ * Returns null when the server didn't include any of the expected headers.
+ */
+function parseRateLimit(headers) {
+  if (!headers || typeof headers.get !== 'function') return null;
+  const toInt = (v) => {
+    const n = parseInt(v, 10);
+    return Number.isFinite(n) ? n : null;
+  };
+  const remaining = toInt(headers.get('x-ratelimit-remaining'));
+  const reset = toInt(headers.get('x-ratelimit-reset'));
+  const limit = toInt(headers.get('x-ratelimit-limit'));
+  if (remaining == null && reset == null && limit == null) return null;
+  return { remaining, reset, limit };
+}
+
+/**
  * Fetch a single page of tasks from a list.
  * Returns { tasks, error } — NEVER throws. A transient error returns
  * { tasks: [], error } so callers can distinguish end-of-list (no error)
@@ -102,6 +133,8 @@ module.exports = {
   getTask,
   updateTaskStatus,
   deleteTask,
+  deleteTaskWithMeta,
+  parseRateLimit,
   fetchListPage,
   fetchViewPage
 };
