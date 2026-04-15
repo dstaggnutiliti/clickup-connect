@@ -1,141 +1,75 @@
-// api/getTasks.js - Endpoint to fetch task statuses
-const axios = require('axios');
+// api/getTasks.js - Batch-fetch task status
+const { applyCors } = require('./_lib/http');
+const { getTask } = require('./_lib/clickup');
 
-// CORS headers
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
-  'Access-Control-Allow-Headers': 'Content-Type, Authorization'
-};
+const BATCH_SIZE = 2;
+const INTER_BATCH_DELAY_MS = 1000;
 
 module.exports = async (req, res) => {
-  // Set CORS headers
-  Object.entries(corsHeaders).forEach(([key, value]) => {
-    res.setHeader(key, value);
-  });
+  applyCors(res);
 
-  // Handle preflight
-  if (req.method === 'OPTIONS') {
-    return res.status(200).end();
-  }
-  
-  // Only allow POST
-  if (req.method !== 'POST') {
-    return res.status(405).json({ error: 'Method not allowed' });
-  }
+  if (req.method === 'OPTIONS') return res.status(200).end();
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { taskIds } = req.body;
-  const apiKey = process.env.CLICKUP_API_KEY;
+  const { taskIds } = req.body || {};
 
-  if (!apiKey) {
-    return res.status(500).json({
-      error: 'Configuration error',
-      message: 'CLICKUP_API_KEY environment variable is not configured'
-    });
-  }
-
-  if (!taskIds || !Array.isArray(taskIds) || taskIds.length === 0) {
+  if (!Array.isArray(taskIds) || taskIds.length === 0) {
     return res.status(400).json({
       error: 'Missing required parameters',
       message: 'taskIds array is required'
     });
   }
-  
+
   const results = [];
-  const BATCH_SIZE = 2; // Reduced batch size to avoid timeouts
-  
+
   try {
-    // Process tasks in batches
     for (let i = 0; i < taskIds.length; i += BATCH_SIZE) {
       const batch = taskIds.slice(i, i + BATCH_SIZE);
-      console.log(`Fetching batch ${Math.floor(i/BATCH_SIZE) + 1}, tasks: ${batch.join(', ')}`);
-      
-      const batchPromises = batch.map(async (taskId) => {
+      console.log(`Fetching batch ${Math.floor(i / BATCH_SIZE) + 1}, tasks: ${batch.join(', ')}`);
+
+      const batchResults = await Promise.all(batch.map(async (taskId) => {
         try {
-          const response = await axios({
-            method: 'GET',
-            url: `https://api.clickup.com/api/v2/task/${taskId}`,
-            headers: {
-              'Authorization': apiKey,
-              'Content-Type': 'application/json'
-            },
-            timeout: 8000 // 8 second timeout per request
-          });
-          
-          // Extract relevant data
-          const { id, name, status, url, list } = response.data;
-          
-          return { 
-            taskId: id, 
-            name, 
+          const task = await getTask(taskId, { timeout: 8000 });
+          return {
+            taskId: task.id,
+            name: task.name,
             status: {
-              status: status?.status || 'Unknown',
-              color: status?.color || null
+              status: task.status?.status || 'Unknown',
+              color: task.status?.color || null
             },
-            url,
-            list: list ? { 
-              id: list.id, 
-              name: list.name 
-            } : null,
-            success: true 
+            url: task.url,
+            list: task.list ? { id: task.list.id, name: task.list.name } : null,
+            success: true
           };
         } catch (error) {
           console.error(`Error fetching task ${taskId}:`, error.message);
-          
-          if (error.code === 'ECONNABORTED') {
-            return { 
-              taskId, 
-              success: false, 
-              message: 'Request timed out. Please try again with fewer tasks.' 
-            };
-          }
-          
-          if (error.response) {
-            return { 
-              taskId, 
-              success: false, 
-              message: `Failed: ${error.response.data?.err || error.response.statusText}` 
-            };
-          } else {
-            return { 
-              taskId, 
-              success: false, 
-              message: `Failed: ${error.message}` 
-            };
-          }
+          return {
+            taskId,
+            success: false,
+            message: error.code === 'ETIMEDOUT'
+              ? 'Request timed out. Please try again with fewer tasks.'
+              : `Failed: ${error.body?.err || error.message}`
+          };
         }
-      });
-      
-      // Wait for current batch to complete
-      const batchResults = await Promise.all(batchPromises);
+      }));
+
       results.push(...batchResults);
-      
-      // Add a small delay between batches to avoid rate limiting
+
       if (i + BATCH_SIZE < taskIds.length) {
-        await new Promise(resolve => setTimeout(resolve, 1000)); // Increased delay
+        await new Promise(resolve => setTimeout(resolve, INTER_BATCH_DELAY_MS));
       }
     }
-    
+
     return res.status(200).json({ results });
   } catch (error) {
     console.error('Unhandled error in getTasks:', error.message);
-    
-    if (error.code === 'ECONNABORTED') {
-      return res.status(504).json({ 
-        error: 'Request timeout', 
-        message: 'The request to ClickUp API timed out. Please try again with fewer tasks.' 
-      });
+
+    if (error.code === 'NO_API_KEY') {
+      return res.status(500).json({ error: error.message });
     }
-    
-    if (error.response) {
-      return res.status(error.response.status).json({ 
-        error: 'ClickUp API error', 
-        message: error.response.data?.err || error.message 
-      });
-    }
-    
-    return res.status(500).json({ 
-      error: 'Failed to process request', 
+
+    return res.status(500).json({
+      error: 'Failed to process request',
       message: error.message || 'An unknown error occurred'
     });
   }
