@@ -360,6 +360,20 @@
           </div>
         </div>
         <div id="archiveLog" class="bg-zinc-950 text-emerald-400 rounded-lg p-3 font-mono text-xs h-48 overflow-y-auto ring-1 ring-zinc-800"></div>
+        <!-- ClickUp API rate-limit indicator -->
+        <div id="rateLimitDisplay" class="hidden mt-3 rounded-lg bg-slate-50 ring-1 ring-slate-200 px-3 py-2 text-xs text-slate-600 flex items-center justify-between">
+          <span>
+            ClickUp API:
+            <span id="rateLimitRemaining" class="font-mono font-semibold text-slate-900 tabular-nums">—</span>
+            <span class="text-slate-400">/</span>
+            <span id="rateLimitLimit" class="font-mono tabular-nums">—</span>
+            remaining
+          </span>
+          <span>
+            resets in
+            <span id="rateLimitReset" class="font-mono font-semibold text-slate-900 tabular-nums">—</span>s
+          </span>
+        </div>
       </div>
 
       <!-- Results Section -->
@@ -967,8 +981,30 @@
           let deleted = 0;
           let failed = 0;
           let page = 0;
-          const BATCH_SIZE = 5; // Tasks per archive batch
+          let lastRateLimit = null; // threaded through batches for continuity
+          const BATCH_SIZE = 10; // Tasks per archive batch (server MAX_BATCH_SIZE)
           const FETCH_LIMIT = 100; // Tasks per fetch page
+
+          // Rate-limit display elements + helper
+          const rateLimitDisplay = document.getElementById('rateLimitDisplay');
+          const rateLimitRemainingEl = document.getElementById('rateLimitRemaining');
+          const rateLimitLimitEl = document.getElementById('rateLimitLimit');
+          const rateLimitResetEl = document.getElementById('rateLimitReset');
+          function updateRateLimitDisplay(rl) {
+            if (!rl || rl.remaining == null) return;
+            lastRateLimit = rl;
+            rateLimitDisplay.classList.remove('hidden');
+            rateLimitRemainingEl.textContent = rl.remaining ?? '—';
+            rateLimitLimitEl.textContent = rl.limit ?? '—';
+            if (rl.reset) {
+              const secsLeft = Math.max(0, Math.round(rl.reset - Date.now() / 1000));
+              rateLimitResetEl.textContent = secsLeft;
+            }
+            // Colour the remaining count based on headroom
+            const ratio = rl.limit ? rl.remaining / rl.limit : 1;
+            rateLimitRemainingEl.className = 'font-mono font-semibold tabular-nums ' +
+              (ratio > 0.3 ? 'text-emerald-700' : ratio > 0.1 ? 'text-amber-600' : 'text-rose-600');
+          }
 
           addLogEntry(`Starting archive process for ${sourceDesc}`, 'info');
           if (viewId) {
@@ -1026,17 +1062,20 @@
               const archiveResponse = await fetch('/api/archiveBatch', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tasks: batchToProcess })
+                body: JSON.stringify({ tasks: batchToProcess, knownRateLimit: lastRateLimit })
               });
 
               if (!archiveResponse.ok) {
-                const errorData = await archiveResponse.json();
-                addLogEntry(`Batch error: ${errorData.message}`, 'error');
+                const errorData = await archiveResponse.json().catch(() => ({}));
+                addLogEntry(`Batch error: ${errorData.message || archiveResponse.status}`, 'error');
                 failed += batchToProcess.length;
                 continue;
               }
 
               const archiveData = await archiveResponse.json();
+
+              // Thread the rate-limit state back into the display and the next batch
+              if (archiveData.rateLimit) updateRateLimitDisplay(archiveData.rateLimit);
 
               // Update counters
               archiveData.results.forEach(result => {
@@ -1051,17 +1090,14 @@
               progressSaved.textContent = saved;
               progressDeleted.textContent = deleted;
 
-              // Update progress bar
-              const processed = saved;
-              const percent = Math.round((processed / archiveCount) * 100);
+              // Update progress bar (tasks deleted is the real "done" signal)
+              const percent = Math.round((deleted / archiveCount) * 100);
               archiveProgressBar.style.width = `${Math.min(percent, 100)}%`;
-              archiveProgressText.textContent = `${processed} / ${archiveCount} tasks`;
+              archiveProgressText.textContent = `${deleted} / ${archiveCount} tasks`;
               archiveProgressPercent.textContent = `${Math.min(percent, 100)}%`;
 
               addLogEntry(`Batch complete: ${archiveData.successful} archived`, 'success');
-
-              // Small delay between batches
-              await new Promise(resolve => setTimeout(resolve, 500));
+              // No fixed delay — server already paces via rate-limit headers
             }
 
             // Check if we should continue
