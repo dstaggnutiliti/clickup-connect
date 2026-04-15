@@ -8,7 +8,7 @@
     "deploy": "vercel deploy --prod"
   },
   "engines": {
-    "node": ">=18"
+    "node": "22.x"
   },
   "dependencies": {
     "mongodb": "^6.21.0"
