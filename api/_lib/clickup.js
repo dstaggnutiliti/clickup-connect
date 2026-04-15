@@ -24,6 +24,13 @@ async function getList(listId, { timeout = 5000 } = {}) {
   });
 }
 
+async function getView(viewId, { timeout = 5000 } = {}) {
+  return fetchJson(`${BASE_URL}/view/${viewId}`, {
+    headers: authHeaders(),
+    timeout
+  });
+}
+
 async function getTask(taskId, { timeout = 8000 } = {}) {
   return fetchJson(`${BASE_URL}/task/${taskId}`, {
     headers: authHeaders(),
@@ -91,6 +98,7 @@ async function fetchViewPage(viewId, page, { timeout = 8000 } = {}) {
 module.exports = {
   getApiKey,
   getList,
+  getView,
   getTask,
   updateTaskStatus,
   deleteTask,

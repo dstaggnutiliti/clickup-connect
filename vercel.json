@@ -6,6 +6,7 @@
   ],
   "routes": [
     { "src": "/api/getList", "dest": "/api/getList.js" },
+    { "src": "/api/getView", "dest": "/api/getView.js" },
     { "src": "/api/processTask", "dest": "/api/processTask.js" },
     { "src": "/api/getTasks", "dest": "/api/getTasks.js" },
     { "src": "/api/getListStats", "dest": "/api/getListStats.js" },

@@ -236,7 +236,7 @@
         <div class="flex items-center justify-between mb-4">
           <h3 class="text-sm font-semibold text-slate-700">List Statistics</h3>
         </div>
-        <div class="flex gap-3 items-end mb-4">
+        <div class="flex gap-3 items-end mb-2">
           <div class="flex-1">
             <label class="block text-sm font-medium text-slate-700 mb-1.5" for="archiveListId">
               List ID
@@ -244,6 +244,7 @@
             <input
               type="text"
               id="archiveListId"
+              value="90170969354"
               class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 placeholder:text-slate-400 font-mono"
               placeholder="Enter list ID…"
             />
@@ -256,6 +257,7 @@
             Check Stats
           </button>
         </div>
+        <p id="archiveListIdResolved" class="mb-4 text-xs text-slate-500 min-h-[1.25rem]"></p>
         <div id="statsDisplay" class="hidden">
           <div class="grid grid-cols-3 gap-3">
             <div class="rounded-lg bg-gradient-to-br from-violet-50 to-indigo-50 ring-1 ring-violet-100 p-4">
@@ -298,9 +300,11 @@
             <input
               type="text"
               id="archiveViewId"
+              value="xhvdd-71517"
               class="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm shadow-sm outline-none transition focus:border-violet-500 focus:ring-2 focus:ring-violet-500/20 placeholder:text-slate-400 font-mono"
               placeholder="e.g., abc-123"
             />
+            <p id="archiveViewIdResolved" class="text-xs text-slate-500 mt-1.5 min-h-[1.25rem]"></p>
             <p class="text-xs text-slate-500 mt-1.5">
               A pre-sorted ClickUp view (oldest-closed-first) gives faster, more accurate results.
             </p>
@@ -783,6 +787,85 @@
       const archiveLog = document.getElementById('archiveLog');
       const archiveResultsSection = document.getElementById('archiveResultsSection');
       const archiveResultSummary = document.getElementById('archiveResultSummary');
+      const archiveListIdResolved = document.getElementById('archiveListIdResolved');
+      const archiveViewIdResolved = document.getElementById('archiveViewIdResolved');
+
+      // ---- Resolver: look up list/view names from the ClickUp API ----
+      // Keeps the user oriented when the inputs are pre-filled with IDs.
+
+      function setResolved(el, state, text) {
+        // state: 'loading' | 'ok' | 'error' | 'empty'
+        const styles = {
+          loading: 'text-slate-500',
+          ok:      'text-emerald-700 font-medium',
+          error:   'text-rose-600',
+          empty:   'text-slate-400'
+        };
+        el.className = `text-xs ${styles[state]} min-h-[1.25rem]` +
+                       (el.id === 'archiveViewIdResolved' ? ' mt-1.5' : ' mb-4');
+        el.textContent = text;
+      }
+
+      // Token per input to cancel stale responses when the user types again
+      const resolveTokens = { list: 0, view: 0 };
+
+      async function resolveListName() {
+        const id = archiveListIdInput.value.trim();
+        if (!id) { setResolved(archiveListIdResolved, 'empty', ''); return; }
+        const token = ++resolveTokens.list;
+        setResolved(archiveListIdResolved, 'loading', 'Resolving list…');
+        try {
+          const res = await fetch(`/api/getList?listId=${encodeURIComponent(id)}`);
+          if (token !== resolveTokens.list) return; // stale
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            setResolved(archiveListIdResolved, 'error', `List not found (${err.message || res.status})`);
+            return;
+          }
+          const data = await res.json();
+          setResolved(archiveListIdResolved, 'ok', `✓ List: ${data.name || 'Unknown'}`);
+        } catch (e) {
+          if (token !== resolveTokens.list) return;
+          setResolved(archiveListIdResolved, 'error', `Could not resolve list: ${e.message}`);
+        }
+      }
+
+      async function resolveViewName() {
+        const id = archiveViewIdInput.value.trim();
+        if (!id) { setResolved(archiveViewIdResolved, 'empty', ''); return; }
+        const token = ++resolveTokens.view;
+        setResolved(archiveViewIdResolved, 'loading', 'Resolving view…');
+        try {
+          const res = await fetch(`/api/getView?viewId=${encodeURIComponent(id)}`);
+          if (token !== resolveTokens.view) return; // stale
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            setResolved(archiveViewIdResolved, 'error', `View not found (${err.message || res.status})`);
+            return;
+          }
+          const data = await res.json();
+          const name = data.view?.name || data.name || 'Unknown';
+          setResolved(archiveViewIdResolved, 'ok', `✓ View: ${name}`);
+        } catch (e) {
+          if (token !== resolveTokens.view) return;
+          setResolved(archiveViewIdResolved, 'error', `Could not resolve view: ${e.message}`);
+        }
+      }
+
+      function debounce(fn, ms) {
+        let t;
+        return function () {
+          clearTimeout(t);
+          t = setTimeout(fn, ms);
+        };
+      }
+
+      archiveListIdInput.addEventListener('input', debounce(resolveListName, 400));
+      archiveViewIdInput.addEventListener('input', debounce(resolveViewName, 400));
+
+      // Resolve on load for the pre-filled default values
+      resolveListName();
+      resolveViewName();
 
       // Helper to add log entry
       function addLogEntry(message, type = 'info') {
